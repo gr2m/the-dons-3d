@@ -27,7 +27,6 @@ python3 -m http.server 8080
 - **Default** — all houses in purple, streets in white
 - **Color by Street** — houses and streets colored by their street, with a legend
 - **Color by Elevation** — blue (low) to red (high)
-- **Density Heatmap** — colored by number of nearby buildings
 
 ### Layers
 

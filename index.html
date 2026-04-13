@@ -90,7 +90,6 @@
     <button class="viz-btn active" data-viz="default">Default (uniform)</button>
     <button class="viz-btn" data-viz="street">Color by Street</button>
     <button class="viz-btn" data-viz="elevation">Color by Elevation</button>
-    <button class="viz-btn" data-viz="density">Density Heatmap</button>
   </div>
 
   <h2 id="legend-title" style="display:none">Legend</h2>
@@ -672,27 +671,6 @@ function applyVisualization(mode) {
         break;
       }
 
-      case 'density': {
-        const densities = buildingMeshes.map(m => {
-          let count = 0;
-          for (const other of buildingMeshes) {
-            const dx = m.userData.lat - other.userData.lat;
-            const dy = m.userData.lon - other.userData.lon;
-            if (dx * dx + dy * dy < 0.00002) count++;
-          }
-          return count;
-        });
-        const maxD = Math.max(...densities);
-        buildingMeshes.forEach((m, i) => {
-          const t = densities[i] / maxD;
-          m.material.color.setHSL(0.7 - t * 0.7, 0.8, 0.3 + t * 0.4);
-          m.material.opacity = 1.0;
-          m.material.transparent = false;
-        });
-        legendTitle.style.display = '';
-        legend.innerHTML = '<span class="color-chip"><span class="color-dot" style="background:hsl(252,80%,30%)"></span>Low</span><span class="color-chip"><span class="color-dot" style="background:hsl(126,80%,50%)"></span>Medium</span><span class="color-chip"><span class="color-dot" style="background:hsl(0,80%,70%)"></span>High</span>';
-        break;
-      }
     }
     mesh.material.needsUpdate = true;
   }
