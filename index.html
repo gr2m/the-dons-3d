@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Dons — Baldwin Hills 3D Map</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; overflow: hidden; background: #1a1a2e; }
+  #canvas { width: 100vw; height: 100vh; display: block; }
+
+  #panel {
+    position: fixed; top: 0; left: 0; width: 300px; height: 100vh;
+    background: rgba(15, 15, 30, 0.92); backdrop-filter: blur(12px);
+    color: #e0e0e0; padding: 20px; overflow-y: auto;
+    border-right: 1px solid rgba(255,255,255,0.08);
+    z-index: 10;
+    transition: transform 0.3s ease;
+  }
+  #panel.collapsed { transform: translateX(-300px); }
+  #panel h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; color: #fff; }
+  #panel .subtitle { font-size: 12px; color: #888; margin-bottom: 20px; }
+  #panel h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #aaa; margin: 16px 0 8px; }
+  #panel label { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; cursor: pointer; }
+  #panel label:hover { color: #fff; }
+  #panel input[type="checkbox"] { accent-color: #6c63ff; }
+  #panel select, #panel input[type="range"] { width: 100%; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); color: #fff; padding: 6px 8px; border-radius: 4px; font-size: 13px; }
+  #panel select:focus { outline: 1px solid #6c63ff; }
+  #panel .color-legend { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  #panel .color-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 6px; border-radius: 3px; background: rgba(255,255,255,0.06); }
+  #panel .color-dot { width: 10px; height: 10px; border-radius: 50%; }
+  #panel .stat { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  #panel .stat-val { color: #6c63ff; font-weight: 600; }
+
+  #toggle-panel {
+    position: fixed; top: 12px; left: 12px; z-index: 11;
+    background: rgba(15,15,30,0.9); border: 1px solid rgba(255,255,255,0.12);
+    color: #fff; width: 36px; height: 36px; border-radius: 6px;
+    cursor: pointer; font-size: 18px; display: none; align-items: center; justify-content: center;
+    transition: left 0.3s ease;
+  }
+  #panel.collapsed ~ #toggle-panel { display: flex; left: 12px; }
+
+  #tooltip {
+    position: fixed; pointer-events: none; z-index: 20;
+    background: rgba(10,10,25,0.95); border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 6px; padding: 10px 14px; color: #fff; font-size: 12px;
+    display: none; max-width: 280px; backdrop-filter: blur(8px);
+  }
+  #tooltip .tt-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  #tooltip .tt-detail { color: #aaa; }
+
+  #loading {
+    position: fixed; inset: 0; z-index: 100;
+    background: #1a1a2e; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; color: #fff;
+  }
+  #loading .spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1); border-top-color: #6c63ff; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 16px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .viz-btn {
+    display: block; width: 100%; padding: 8px; margin: 4px 0;
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+    color: #e0e0e0; border-radius: 4px; cursor: pointer; font-size: 13px; text-align: left;
+    transition: all 0.15s;
+  }
+  .viz-btn:hover { background: rgba(108,99,255,0.2); border-color: rgba(108,99,255,0.4); }
+  .viz-btn.active { background: rgba(108,99,255,0.3); border-color: #6c63ff; color: #fff; }
+</style>
+</head>
+<body>
+<div id="loading"><div class="spinner"></div>Loading The Dons 3D Map...</div>
+
+<div id="panel">
+  <h1>The Dons</h1>
+  <div class="subtitle">Baldwin Hills, Los Angeles</div>
+
+  <h2>Stats</h2>
+  <div id="stats"></div>
+
+  <h2>Layers</h2>
+  <label><input type="checkbox" id="layer-ground" checked> Ground</label>
+  <label><input type="checkbox" id="layer-streets" checked> Don Streets</label>
+  <label><input type="checkbox" id="layer-context" checked> Major Roads</label>
+  <label><input type="checkbox" id="layer-buildings" checked> Houses</label>
+  <label><input type="checkbox" id="layer-labels" checked> Street Labels</label>
+
+  <h2>Visualization</h2>
+  <div id="viz-buttons">
+    <button class="viz-btn active" data-viz="default">Default (uniform)</button>
+    <button class="viz-btn" data-viz="street">Color by Street</button>
+    <button class="viz-btn" data-viz="elevation">Color by Elevation</button>
+    <button class="viz-btn" data-viz="density">Density Heatmap</button>
+  </div>
+
+  <h2 id="legend-title" style="display:none">Legend</h2>
+  <div id="legend" class="color-legend"></div>
+</div>
+
+<button id="toggle-panel">&#9776;</button>
+<div id="tooltip"><div class="tt-title"></div><div class="tt-detail"></div></div>
+<canvas id="canvas"></canvas>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+// ─── Load data ───────────────────────────────────────────────
+const mapData = await fetch('./map_data.json').then(r => r.json());
+document.getElementById('loading').style.display = 'none';
+
+// ─── Constants ───────────────────────────────────────────────
+const CENTER = mapData.center;
+const METER_PER_DEG_LAT = 111320;
+const METER_PER_DEG_LON = 111320 * Math.cos(CENTER.lat * Math.PI / 180);
+const BASE_BUILDING_HEIGHT = 7.5;
+
+function toLocal(lat, lon) {
+  return [
+    (lon - CENTER.lon) * METER_PER_DEG_LON,
+    (lat - CENTER.lat) * METER_PER_DEG_LAT
+  ];
+}
+
+// ─── Elevation lookup (for streets only) ─────────────────────
+const elev = mapData.elevation;
+
+function getElevation(lat, lon) {
+  const step = elev.step;
+  const minLat = elev.points[0][0];
+  const minLon = elev.points[0][1];
+  const fi = (lat - minLat) / step;
+  const fj = (lon - minLon) / step;
+  const i0 = Math.floor(fi), j0 = Math.floor(fj);
+  const i1 = i0 + 1, j1 = j0 + 1;
+  const fx = fi - i0, fy = fj - j0;
+  const get = (i, j) => {
+    const idx = i * elev.cols + j;
+    if (idx >= 0 && idx < elev.points.length) return elev.points[idx][2];
+    return 80;
+  };
+  const e00 = get(i0, j0), e10 = get(i1, j0);
+  const e01 = get(i0, j1), e11 = get(i1, j1);
+  return (e00 * (1 - fx) * (1 - fy) + e10 * fx * (1 - fy) + e01 * (1 - fx) * fy + e11 * fx * fy);
+}
+
+// Min elevation as base reference for flat ground
+const minElev = Math.min(...elev.points.map(p => p[2]));
+
+function getLocalElevation(lat, lon) {
+  return (getElevation(lat, lon) - minElev);
+}
+
+// Returns the max elevation of the 4 grid corners surrounding a point.
+// The terrain mesh (PlaneGeometry) can never exceed this within that cell.
+function getMaxCellElevation(lat, lon) {
+  const step = elev.step;
+  const minLat = elev.points[0][0];
+  const minLon = elev.points[0][1];
+  const fi = (lat - minLat) / step;
+  const fj = (lon - minLon) / step;
+  const i0 = Math.floor(fi), j0 = Math.floor(fj);
+  const get = (i, j) => {
+    i = Math.max(0, Math.min(elev.rows - 1, i));
+    j = Math.max(0, Math.min(elev.cols - 1, j));
+    return elev.points[i * elev.cols + j][2] - minElev;
+  };
+  return Math.max(get(i0, j0), get(i0 + 1, j0), get(i0, j0 + 1), get(i0 + 1, j0 + 1));
+}
+
+// ─── Scene setup ─────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 5000);
+camera.position.set(300, 450, 550);
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('canvas'), antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.setSize(window.innerWidth, window.innerHeight);
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.pointerEvents = 'none';
+document.body.appendChild(labelRenderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI / 2.1;
+controls.minDistance = 30;
+controls.maxDistance = 2000;
+controls.target.set(0, 10, 0);
+
+// Toggle rotate/pan with shift mid-drag by faking pointer up/down
+let _dragging = false, _lastPointerEvent = null;
+renderer.domElement.addEventListener('pointerdown', e => { if (e.button === 0) { _dragging = true; _lastPointerEvent = e; } }, true);
+renderer.domElement.addEventListener('pointermove', e => { if (_dragging) _lastPointerEvent = e; }, true);
+renderer.domElement.addEventListener('pointerup', e => { if (e.button === 0 || e.button === 2) _dragging = false; }, true);
+
+function fakePointer(type, button, srcEvent) {
+  const e = new PointerEvent(type, {
+    bubbles: true, clientX: srcEvent.clientX, clientY: srcEvent.clientY,
+    button, pointerId: srcEvent.pointerId || 1, pointerType: 'mouse',
+  });
+  renderer.domElement.dispatchEvent(e);
+}
+
+window.addEventListener('keydown', e => {
+  if (e.key === 'Shift' && _dragging && _lastPointerEvent) {
+    fakePointer('pointerup', 0, _lastPointerEvent);
+    fakePointer('pointerdown', 2, _lastPointerEvent);
+    _dragging = true;
+  }
+});
+window.addEventListener('keyup', e => {
+  if (e.key === 'Shift' && _dragging && _lastPointerEvent) {
+    fakePointer('pointerup', 2, _lastPointerEvent);
+    fakePointer('pointerdown', 0, _lastPointerEvent);
+    _dragging = true;
+  }
+});
+
+// ─── Lighting ────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0x667788, 0.7));
+const sun = new THREE.DirectionalLight(0xffeedd, 1.4);
+sun.position.set(400, 600, 300);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -800;
+sun.shadow.camera.right = 800;
+sun.shadow.camera.top = 800;
+sun.shadow.camera.bottom = -800;
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0x8899bb, 0x445533, 0.4));
+
+// ─── Groups ──────────────────────────────────────────────────
+const groundGroup = new THREE.Group();
+const streetGroup = new THREE.Group();
+const contextGroup = new THREE.Group();
+const buildingGroup = new THREE.Group();
+const labelGroup = new THREE.Group();
+scene.add(groundGroup, streetGroup, contextGroup, buildingGroup, labelGroup);
+
+// ─── Color palette for streets ───────────────────────────────
+const STREET_COLORS = [
+  0xe6194b, 0x3cb44b, 0xffe119, 0x4363d8, 0xf58231,
+  0x911eb4, 0x42d4f4, 0xf032e6, 0xbfef45, 0xfabed4,
+  0x469990, 0xdcbeff, 0x9A6324, 0xfffac8, 0x800000,
+  0xaaffc3, 0x808000, 0xffd8b1, 0x000075, 0xa9a9a9,
+  0xe6beff, 0xaa6e28, 0xacbe7c, 0xcc6688, 0x77aadd,
+  0x88ccaa, 0xddaa77, 0xbb88bb, 0xdd7788, 0xff6666
+];
+
+// Get street names from house data
+const parcelStreetNames = [...new Set(mapData.houses.map(p => p[2]))].sort();
+const streetColorMap = {};
+parcelStreetNames.forEach((name, i) => {
+  streetColorMap[name] = STREET_COLORS[i % STREET_COLORS.length];
+});
+
+// ─── Build terrain (solid block with sides and bottom) ───────
+function buildGround() {
+  groundGroup.clear();
+  const rows = elev.rows, cols = elev.cols;
+  const maxZ = Math.max(...elev.points.map(p => p[2])) - minElev;
+  const width = (cols - 1) * elev.step * METER_PER_DEG_LON;
+  const depth = (rows - 1) * elev.step * METER_PER_DEG_LAT;
+
+  const cx = ((elev.points[0][1] + elev.points[elev.points.length - 1][1]) / 2 - CENTER.lon) * METER_PER_DEG_LON;
+  const cz = -((elev.points[0][0] + elev.points[elev.points.length - 1][0]) / 2 - CENTER.lat) * METER_PER_DEG_LAT;
+
+  // Helper: grid position in world XZ
+  function gridPos(r, c) {
+    const x = cx - width / 2 + c * (width / (cols - 1));
+    const z = cz + depth / 2 - r * (depth / (rows - 1));
+    return [x, z];
+  }
+  // Elevation for grid row r, col c (row 0 = south = min lat)
+  function gridElev(r, c) {
+    const idx = r * cols + c;
+    return (idx >= 0 && idx < elev.points.length) ? elev.points[idx][2] - minElev : 0;
+  }
+  // Color for an elevation value
+  function elevColor(e) {
+    const t = Math.max(0, Math.min(1, e / maxZ));
+    return [0.12 + t * 0.18, 0.18 + t * 0.25, 0.08 + t * 0.1];
+  }
+  const SIDE_COLOR = [0.15, 0.13, 0.10];
+  const BOTTOM_COLOR = [0.10, 0.09, 0.07];
+
+  // --- Top surface (terrain) ---
+  const topGeo = new THREE.PlaneGeometry(width, depth, cols - 1, rows - 1);
+  const topPos = topGeo.attributes.position;
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      const vIdx = (rows - 1 - i) * cols + j;
+      topPos.setZ(vIdx, gridElev(i, j));
+    }
+  }
+  topGeo.computeVertexNormals();
+  const topColors = new Float32Array(topPos.count * 3);
+  for (let i = 0; i < topPos.count; i++) {
+    const [r, g, b] = elevColor(topPos.getZ(i));
+    topColors[i * 3] = r; topColors[i * 3 + 1] = g; topColors[i * 3 + 2] = b;
+  }
+  topGeo.setAttribute('color', new THREE.BufferAttribute(topColors, 3));
+  const topMat = new THREE.MeshLambertMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  const topMesh = new THREE.Mesh(topGeo, topMat);
+  topMesh.rotation.x = -Math.PI / 2;
+  topMesh.position.set(cx, 0, cz);
+  topMesh.receiveShadow = true;
+  groundGroup.add(topMesh);
+
+  // --- Bottom face ---
+  const botGeo = new THREE.PlaneGeometry(width, depth);
+  const botMat = new THREE.MeshLambertMaterial({ color: 0x1a1710 });
+  const botMesh = new THREE.Mesh(botGeo, botMat);
+  botMesh.rotation.x = Math.PI / 2;
+  botMesh.position.set(cx, 0, cz);
+  groundGroup.add(botMesh);
+
+  // --- Four sides ---
+  const sideMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+
+  function buildSide(edgeCoords) {
+    // edgeCoords: array of {x, z, elevation} along one edge
+    const verts = [], colors = [], indices = [];
+    for (let i = 0; i < edgeCoords.length; i++) {
+      const { x, z, e } = edgeCoords[i];
+      // Top vertex
+      verts.push(x, e, z);
+      const [cr, cg, cb] = elevColor(e);
+      colors.push(cr, cg, cb);
+      // Bottom vertex
+      verts.push(x, 0, z);
+      colors.push(...SIDE_COLOR);
+    }
+    for (let i = 0; i < edgeCoords.length - 1; i++) {
+      const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+      indices.push(a, b, c, c, b, d);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, sideMat);
+    mesh.castShadow = true;
+    groundGroup.add(mesh);
+  }
+
+  // South edge (row 0, left to right)
+  const south = [];
+  for (let c = 0; c < cols; c++) {
+    const [x, z] = gridPos(0, c);
+    south.push({ x, z, e: gridElev(0, c) });
+  }
+  buildSide(south);
+
+  // North edge (row rows-1, right to left for correct winding)
+  const north = [];
+  for (let c = cols - 1; c >= 0; c--) {
+    const [x, z] = gridPos(rows - 1, c);
+    north.push({ x, z, e: gridElev(rows - 1, c) });
+  }
+  buildSide(north);
+
+  // West edge (col 0, north to south)
+  const west = [];
+  for (let r = rows - 1; r >= 0; r--) {
+    const [x, z] = gridPos(r, 0);
+    west.push({ x, z, e: gridElev(r, 0) });
+  }
+  buildSide(west);
+
+  // East edge (col cols-1, south to north)
+  const east = [];
+  for (let r = 0; r < rows; r++) {
+    const [x, z] = gridPos(r, cols - 1);
+    east.push({ x, z, e: gridElev(r, cols - 1) });
+  }
+  buildSide(east);
+}
+
+// ─── Build streets ───────────────────────────────────────────
+function buildStreets() {
+  streetGroup.clear();
+  streetMeshes.length = 0;
+
+  // Inverse-project from local coords back to lat/lon for elevation sampling
+  function toLatLon(x, negZ) {
+    return [
+      CENTER.lat + (-negZ) / METER_PER_DEG_LAT,
+      CENTER.lon + x / METER_PER_DEG_LON
+    ];
+  }
+
+  const STREET_THICKNESS = 1.0; // height of the street slab in meters
+
+  for (const [name, highway, coords] of mapData.streets) {
+    if (coords.length < 2) continue;
+
+    const width = highway === 'residential' ? 8 : highway === 'tertiary' ? 10 : 7;
+
+    // Subdivide segments linearly (no CatmullRom overshoot)
+    const curvePoints = [];
+    for (let s = 0; s < coords.length - 1; s++) {
+      const [lat0, lon0] = coords[s];
+      const [lat1, lon1] = coords[s + 1];
+      const [x0, z0_] = toLocal(lat0, lon0);
+      const [x1, z1_] = toLocal(lat1, lon1);
+      const dist = Math.sqrt((x1 - x0) ** 2 + (z1_ - z0_) ** 2);
+      const steps = Math.max(Math.ceil(dist / 5), 2); // one point every ~5m
+      for (let t = 0; t < steps; t++) {
+        const f = t / steps;
+        curvePoints.push(new THREE.Vector3(
+          x0 + (x1 - x0) * f, 0, -(z0_ + (z1_ - z0_) * f)
+        ));
+      }
+    }
+    // Add last point
+    const [lastLat, lastLon] = coords[coords.length - 1];
+    const [lx_, lz_] = toLocal(lastLat, lastLon);
+    curvePoints.push(new THREE.Vector3(lx_, 0, -lz_));
+
+    // Sample elevation using bilinear interpolation (matches terrain closely)
+    // then smooth the Y profile to avoid roller-coaster effect
+    const ELEV_OFFSET = 3.0;
+    const rawSegments = [];
+    for (let i = 0; i < curvePoints.length; i++) {
+      const p = curvePoints[i];
+      const next = curvePoints[Math.min(i + 1, curvePoints.length - 1)];
+      const prev = curvePoints[Math.max(i - 1, 0)];
+      const dir = new THREE.Vector3().subVectors(next, prev).normalize();
+      const up = new THREE.Vector3(0, 1, 0);
+      const right = new THREE.Vector3().crossVectors(dir, up).normalize().multiplyScalar(width / 2);
+
+      const lx = p.x - right.x, lz = p.z - right.z;
+      const rx = p.x + right.x, rz = p.z + right.z;
+
+      const [cLat, cLon] = toLatLon(p.x, p.z);
+      const y = getLocalElevation(cLat, cLon) + ELEV_OFFSET;
+
+      rawSegments.push({ lx, lz, rx, rz, y });
+    }
+
+    // Gaussian-like smoothing: average over a window to remove jitter
+    const SMOOTH_WINDOW = 8;
+    const segments = rawSegments.map((s, i) => {
+      let sum = 0, count = 0;
+      for (let d = -SMOOTH_WINDOW; d <= SMOOTH_WINDOW; d++) {
+        const j = i + d;
+        if (j >= 0 && j < rawSegments.length) {
+          const w = 1.0 - Math.abs(d) / (SMOOTH_WINDOW + 1); // triangle kernel
+          sum += rawSegments[j].y * w;
+          count += w;
+        }
+      }
+      return { ...s, y: sum / count };
+    });
+
+    // Build a slab: top face + side skirt going down by STREET_THICKNESS
+    const verts = [], indices = [];
+    for (let i = 0; i < segments.length; i++) {
+      const { lx, lz, rx, rz, y } = segments[i];
+      verts.push(lx, y, lz);                        // 0: top-left
+      verts.push(rx, y, rz);                        // 1: top-right
+      verts.push(lx, y - STREET_THICKNESS, lz);     // 2: bottom-left
+      verts.push(rx, y - STREET_THICKNESS, rz);     // 3: bottom-right
+    }
+
+    for (let i = 0; i < segments.length - 1; i++) {
+      const a = i * 4; // top-left
+      const b = a + 1; // top-right
+      const c = a + 2; // bottom-left
+      const d = a + 3; // bottom-right
+      const e = a + 4; // next top-left
+      const f = a + 5; // next top-right
+      const g = a + 6; // next bottom-left
+      const h = a + 7; // next bottom-right
+
+      // Top face
+      indices.push(a, e, b, b, e, f);
+      // Left side
+      indices.push(a, c, e, e, c, g);
+      // Right side
+      indices.push(b, f, d, d, f, h);
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData = { name, type: 'street' };
+    streetGroup.add(mesh);
+    streetMeshes.push(mesh);
+  }
+}
+
+// ─── Build context roads ─────────────────────────────────────
+function buildContextRoads() {
+  contextGroup.clear();
+  for (const [name, highway, coords] of mapData.contextRoads) {
+    if (coords.length < 2) continue;
+    const points = coords.map(([lat, lon]) => {
+      const [x, z_] = toLocal(lat, lon);
+      const e = getLocalElevation(lat, lon) + 0.2;
+      return new THREE.Vector3(x, e, -z_);
+    });
+    const geo = new THREE.BufferGeometry().setFromPoints(points);
+    const mat = new THREE.LineBasicMaterial({ color: 0x444455, transparent: true, opacity: 0.4 });
+    const line = new THREE.Line(geo, mat);
+    line.userData = { name, type: 'context-road' };
+    contextGroup.add(line);
+  }
+}
+
+// ─── Build houses from matched OSM buildings + parcel addresses ─
+// Houses format: [coords, house_num, street_name, lat, lon, levels]
+const streetMeshes = [];
+const buildingMeshes = [];
+
+function buildBuildings() {
+  buildingGroup.clear();
+  buildingMeshes.length = 0;
+
+  for (const [coords, houseNum, streetName, lat, lon, levels] of mapData.houses) {
+    if (coords.length < 3) continue;
+
+    const baseElev = getLocalElevation(lat, lon);
+    const numLevels = parseInt(levels) || 1;
+    const h = numLevels * BASE_BUILDING_HEIGHT;
+
+    // Create shape from parcel footprint
+    const shape = new THREE.Shape();
+    const localCoords = coords.map(([cLat, cLon]) => {
+      const [x, z] = toLocal(cLat, cLon);
+      return [x, z];
+    });
+
+    shape.moveTo(localCoords[0][0], localCoords[0][1]);
+    for (let i = 1; i < localCoords.length; i++) {
+      shape.lineTo(localCoords[i][0], localCoords[i][1]);
+    }
+    shape.closePath();
+
+    const extGeo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
+    extGeo.rotateX(-Math.PI / 2);
+    extGeo.translate(0, baseElev, 0);
+
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x6c63ff,
+      roughness: 0.65,
+      metalness: 0.1,
+    });
+
+    const mesh = new THREE.Mesh(extGeo, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData = {
+      type: 'building',
+      addr: houseNum ? `${houseNum} ${streetName}` : streetName,
+      houseNum,
+      street: streetName,
+      elevation: Math.round(getElevation(lat, lon)),
+      lat,
+      lon,
+    };
+    buildingGroup.add(mesh);
+    buildingMeshes.push(mesh);
+  }
+}
+
+// ─── Build labels ────────────────────────────────────────────
+function buildLabels() {
+  labelGroup.clear();
+  const labeled = new Set();
+  for (const [name, , coords] of mapData.streets) {
+    if (labeled.has(name)) continue;
+    labeled.add(name);
+    const mid = coords[Math.floor(coords.length / 2)];
+    const [x, z_] = toLocal(mid[0], mid[1]);
+    const e = getLocalElevation(mid[0], mid[1]) + 18;
+
+    const div = document.createElement('div');
+    div.textContent = name;
+    div.style.cssText = 'color:#fff;font-size:11px;font-weight:600;text-shadow:0 1px 3px rgba(0,0,0,0.8);pointer-events:none;white-space:nowrap;';
+    const label = new CSS2DObject(div);
+    label.position.set(x, e, -z_);
+    labelGroup.add(label);
+  }
+}
+
+// ─── Initial build ───────────────────────────────────────────
+buildGround();
+buildStreets();
+buildContextRoads();
+buildBuildings();
+buildLabels();
+
+// ─── Stats ───────────────────────────────────────────────────
+const streetCounts = {};
+for (const m of buildingMeshes) {
+  const s = m.userData.street;
+  streetCounts[s] = (streetCounts[s] || 0) + 1;
+}
+document.getElementById('stats').innerHTML = [
+  ['Streets', parcelStreetNames.length],
+  ['Houses', buildingMeshes.length],
+  ['Elevation range', `${Math.round(minElev)}m - ${Math.round(Math.max(...elev.points.map(p => p[2])))}m`],
+].map(([k, v]) => `<div class="stat"><span>${k}</span><span class="stat-val">${v}</span></div>`).join('');
+
+// ─── Visualization modes ─────────────────────────────────────
+let currentViz = 'default';
+
+function applyVisualization(mode) {
+  currentViz = mode;
+  document.querySelectorAll('.viz-btn').forEach(b => b.classList.toggle('active', b.dataset.viz === mode));
+  const legend = document.getElementById('legend');
+  const legendTitle = document.getElementById('legend-title');
+  legend.innerHTML = '';
+  legendTitle.style.display = 'none';
+
+  for (const mesh of buildingMeshes) {
+    const d = mesh.userData;
+
+    switch (mode) {
+      case 'default':
+        mesh.material.color.setHex(0x6c63ff);
+        mesh.material.opacity = 1.0;
+        mesh.material.transparent = false;
+        break;
+
+      case 'street':
+        mesh.material.color.setHex(streetColorMap[d.street] || 0x888888);
+        mesh.material.opacity = 1.0;
+        mesh.material.transparent = false;
+        legendTitle.style.display = '';
+        legend.innerHTML = parcelStreetNames.map(n =>
+          `<span class="color-chip"><span class="color-dot" style="background:#${streetColorMap[n].toString(16).padStart(6, '0')}"></span>${n}</span>`
+        ).join('');
+        break;
+
+      case 'elevation': {
+        const eMin = minElev, eMax = Math.max(...elev.points.map(p => p[2]));
+        const t = Math.max(0, Math.min(1, (d.elevation - eMin) / (eMax - eMin)));
+        const r = t < 0.5 ? 0 : (t - 0.5) * 2;
+        const g = t < 0.5 ? t * 2 : (1 - t) * 2;
+        const b_ = t < 0.5 ? 1 - t * 2 : 0;
+        mesh.material.color.setRGB(r, g, b_);
+        mesh.material.opacity = 1.0;
+        mesh.material.transparent = false;
+        legendTitle.style.display = '';
+        legend.innerHTML = `<span class="color-chip"><span class="color-dot" style="background:#0000ff"></span>${Math.round(eMin)}m</span><span class="color-chip"><span class="color-dot" style="background:#00ff00"></span>${Math.round((eMin+eMax)/2)}m</span><span class="color-chip"><span class="color-dot" style="background:#ff0000"></span>${Math.round(eMax)}m</span>`;
+        break;
+      }
+
+      case 'density': {
+        const densities = buildingMeshes.map(m => {
+          let count = 0;
+          for (const other of buildingMeshes) {
+            const dx = m.userData.lat - other.userData.lat;
+            const dy = m.userData.lon - other.userData.lon;
+            if (dx * dx + dy * dy < 0.00002) count++;
+          }
+          return count;
+        });
+        const maxD = Math.max(...densities);
+        buildingMeshes.forEach((m, i) => {
+          const t = densities[i] / maxD;
+          m.material.color.setHSL(0.7 - t * 0.7, 0.8, 0.3 + t * 0.4);
+          m.material.opacity = 1.0;
+          m.material.transparent = false;
+        });
+        legendTitle.style.display = '';
+        legend.innerHTML = '<span class="color-chip"><span class="color-dot" style="background:hsl(252,80%,30%)"></span>Low</span><span class="color-chip"><span class="color-dot" style="background:hsl(126,80%,50%)"></span>Medium</span><span class="color-chip"><span class="color-dot" style="background:hsl(0,80%,70%)"></span>High</span>';
+        break;
+      }
+    }
+    mesh.material.needsUpdate = true;
+  }
+
+  // Color street meshes
+  for (const mesh of streetMeshes) {
+    const name = mesh.userData.name;
+    switch (mode) {
+      case 'street':
+        mesh.material.color.setHex(streetColorMap[name] || 0xcccccc);
+        break;
+      default:
+        mesh.material.color.setHex(0xffffff);
+        break;
+    }
+    mesh.material.needsUpdate = true;
+  }
+}
+
+// ─── UI bindings ─────────────────────────────────────────────
+document.querySelectorAll('.viz-btn').forEach(btn => {
+  btn.addEventListener('click', () => applyVisualization(btn.dataset.viz));
+});
+
+const layerMap = {
+  'layer-ground': groundGroup,
+  'layer-streets': streetGroup,
+  'layer-context': contextGroup,
+  'layer-buildings': buildingGroup,
+  'layer-labels': labelGroup,
+};
+for (const [id, group] of Object.entries(layerMap)) {
+  document.getElementById(id).addEventListener('change', e => { group.visible = e.target.checked; });
+}
+
+document.getElementById('toggle-panel').addEventListener('click', () => {
+  document.getElementById('panel').classList.remove('collapsed');
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.getElementById('panel').classList.toggle('collapsed');
+});
+
+// ─── Raycasting / tooltip ────────────────────────────────────
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+const tooltip = document.getElementById('tooltip');
+let hoveredMesh = null;
+
+renderer.domElement.addEventListener('mousemove', e => {
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const allTargets = [...buildingMeshes, ...streetMeshes];
+  const hits = raycaster.intersectObjects(allTargets);
+
+  // Reset previous hover highlight
+  if (hoveredMesh && (!hits.length || hits[0].object !== hoveredMesh)) {
+    if (hoveredMesh.material.emissive) hoveredMesh.material.emissive.setHex(0x000000);
+    hoveredMesh = null;
+  }
+
+  if (hits.length > 0) {
+    const hit = hits[0].object;
+    const d = hit.userData;
+
+    // Highlight (only buildings have emissive)
+    if (hit.material.emissive) hit.material.emissive.setHex(0x333355);
+    hoveredMesh = hit;
+
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY + 14) + 'px';
+
+    if (d.type === 'street') {
+      tooltip.querySelector('.tt-title').textContent = d.name;
+      tooltip.querySelector('.tt-detail').innerHTML = '';
+    } else {
+      tooltip.querySelector('.tt-title').textContent = d.addr;
+      tooltip.querySelector('.tt-detail').innerHTML = [
+        `Street: ${d.street}`,
+        `Elevation: ${d.elevation}m`,
+      ].join('<br>');
+    }
+    document.body.style.cursor = 'pointer';
+  } else {
+    tooltip.style.display = 'none';
+    document.body.style.cursor = 'default';
+  }
+});
+
+// ─── Resize ──────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  labelRenderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ─── Animate ─────────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
